@@ -27,7 +27,7 @@ from nltk.stem import SnowballStemmer
 app = FastAPI()
 
 #Definir puerto de la aplicacion
-port = int(os.environ.get("PORT", 5000))
+port = int(os.environ.get("PORT", 8000))
 #Definiciones de columnas
 stopword_es = nltk.corpus.stopwords.words('spanish')
 text_columns = ['descripcion', 'titulo', 'tags', 'ciudad', 'opiniones', 'nombre', 'tagsVendedor', 'regionVendedor', 'ciudadVendedor']
@@ -222,6 +222,10 @@ class NpEncoder(json.JSONEncoder):
             return obj.tolist()
         return super(NpEncoder, self).default(obj)
 
+@app.get("/")
+def read_root():
+    return {"Hello": "World"}
+
 @app.get('/users/{idUsuario}')
 async def read_user(idUsuario: str):
     #Se cargan los datos de los usuarios
@@ -349,3 +353,6 @@ async def read_root(item: Item):
         print ("error", e)
         raise HTTPException(status_code=500, detail=str(e))
     
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=port)
