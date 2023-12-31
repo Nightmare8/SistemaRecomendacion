@@ -4,10 +4,12 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from fastapi import HTTPException
 from pydantic import BaseModel
+import os
 #En este codigo se aplicara el metodo de filtrado colaborativo basado en contenido
 import pandas as pd
 import json
 import numpy as np
+import re
 import matplotlib.pyplot as plt
 from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.feature_extraction.text import TfidfVectorizer
@@ -22,10 +24,11 @@ nltk.download('stopwords')
 nltk.download('punkt')
 from nltk.stem import SnowballStemmer
 
-#Todo esto sera ocupando solo una categoria por el momento
-
 app = FastAPI()
 
+#Definir puerto de la aplicacion
+port = int(os.environ.get("PORT", 5000))
+#Definiciones de columnas
 stopword_es = nltk.corpus.stopwords.words('spanish')
 text_columns = ['descripcion', 'titulo', 'tags', 'ciudad', 'opiniones', 'nombre', 'tagsVendedor', 'regionVendedor', 'ciudadVendedor']
 categorical_columns = ['region']
@@ -76,19 +79,31 @@ def tokenize(text):
     stems = stem_tokens(tokens, stemmer)
     return stems
 
-def process_attribute_column(products, userProducts, attribute_columns, n_components):
+def tokenize_and_stem(text):
+    tokens = [word for sent in nltk.sent_tokenize(text) for word in nltk.word_tokenize(sent)]
+    filtered_tokens = []
+    for token in tokens:
+        if (re.search('[a-zA-Z]', token)):
+            filtered_tokens.append(token)
+    #Exclude stop words from stemmed words
+    stems = [stemmer.stem(t) for t in filtered_tokens if t not in stopword_es]
+
+    return stems
+
+def process_attribute_column(products, userProducts, attribute_columns, n_components, stemming):
     products['all_attributes'] = products[attribute_columns].apply(lambda x: clean_and_join_attributes(x, attribute_columns), axis=1)
     userProducts['all_attributes'] = userProducts[attribute_columns].apply(lambda x: clean_and_join_attributes(x, attribute_columns), axis=1)
     combined_data = pd.concat([products['all_attributes'], userProducts['all_attributes']], ignore_index=True)
     #Aplicar TF-IDF
     tfidf_vectorizer = TfidfVectorizer(stop_words = stopword_es)
+    if (stemming):
+        tfidf_vectorizer = TfidfVectorizer(tokenizer=tokenize_and_stem, token_pattern=None)
     tfidf_data = tfidf_vectorizer.fit_transform(combined_data.values.astype('U'))
 
     #Aplicar SVD
     svd = TruncatedSVD(n_components=n_components)
     reduced_data = svd.fit_transform(tfidf_data)
-    #Imprimir la varianza
-    # print (reduced_data)
+
     #Dividir los datos reducidos en productos y usuarios
     reduced_productos = reduced_data[:products.shape[0]]
     reduced_users = reduced_data[products.shape[0]:]
@@ -97,60 +112,61 @@ def process_attribute_column(products, userProducts, attribute_columns, n_compon
 def reccomendationAllColumns(productos,userProducts, text_columns, numeric_columns,atributes_columns, n_components=2, keyWords = None, stemming=False):
     #aplicar el vectorizador a los productos
     tfidf_vectorizer = TfidfVectorizer(stop_words = stopword_es)
-    tfidf_vectorizer_attributes = TfidfVectorizer(stop_words = stopword_es)
     if (stemming):
-        tfidf_vectorizer = TfidfVectorizer(stop_words = stopword_es, tokenizer=tokenize)
-        tfidf_vectorizer_attributes = TfidfVectorizer(stop_words = stopword_es, tokenizer=tokenize)
-    #clearn text of products
+        tfidf_vectorizer = TfidfVectorizer(tokenizer=tokenize_and_stem, token_pattern=None)
+
+    #Clean text of the product
     productosCopy = productos.copy()
-    productosCopy = productosCopy.replace(np.nan, '', regex=True)
-    productosCopy[text_columns] = productosCopy[text_columns].astype(str)
-    productosCopy[text_columns] = productosCopy[text_columns].apply(clean)
-    productosCopy[atributes_columns] = productosCopy[atributes_columns].astype(str)
-    productosCopy[atributes_columns] = productosCopy[atributes_columns].apply(clean)
+    productosCopy['combined_text'] = productos[text_columns].apply(lambda x: clean_and_join_attributes(x, text_columns), axis=1)
+    
     #Clean Text of user
     userProductsCopy = userProducts.copy()
-    userProductsCopy = userProductsCopy.replace(np.nan, '', regex=True)
-    userProductsCopy[text_columns] = userProductsCopy[text_columns].astype(str)
-    userProductsCopy[text_columns] = userProductsCopy[text_columns].apply(clean)
-    userProductsCopy[atributes_columns] = userProductsCopy[atributes_columns].astype(str)
-    userProductsCopy[atributes_columns] = userProductsCopy[atributes_columns].apply(clean)
-    #Combinar todo los textos de todas las columnas
-    combinedProducts = " ".join(productosCopy[text_columns].sum())
-    combinedUser = " ".join(userProductsCopy[text_columns].sum())
-    combinedProductsAtributes = " ".join(productosCopy[atributes_columns].sum())
-    combinedUserAtributes = " ".join(userProductsCopy[atributes_columns].sum())
-    #Ajustamos el vectorizador con todas las palabras
-    tfidf_vectorizer.fit([combinedProducts, combinedUser])
-    tfidf_vectorizer_attributes.fit([combinedProductsAtributes, combinedUserAtributes])
-    productosCopy['combined_text'] = productos.apply(lambda x: clean_and_join_attributes(x, text_columns), axis=1)
-    text_features_products = tfidf_vectorizer.transform(productosCopy['combined_text'].values.astype('U'))
-    userProductsCopy['combined_text'] = userProducts.apply(lambda x: clean_and_join_attributes(x, text_columns), axis=1)
-    text_features_users = tfidf_vectorizer.transform(userProductsCopy['combined_text'].values.astype('U'))
-   
-    #Calcular atributos
+    userProductsCopy['combined_text'] = userProducts[text_columns].apply(lambda x: clean_and_join_attributes(x, text_columns), axis=1)
+    combined_text = pd.concat([productosCopy['combined_text'], userProductsCopy['combined_text']], ignore_index=True)
     
+    #Aplicar TF-IDF a textos
+    tfidf_vectorizer.fit(combined_text.values.astype('U'))
+    #Solamente se unen las columnas de texto de cada fila
+    text_features_products = tfidf_vectorizer.transform(productosCopy['combined_text'].values.astype('U'))
+    text_features_users = tfidf_vectorizer.transform(userProductsCopy['combined_text'].values.astype('U'))
     if (keyWords != None):
-        keyword_weights = {word: 10 for word in keyWords}
-        #keyWords.append(tfidf_vectorizer.get_feature_names_out()[0])
+        value_new_word = 10
+        keyword_weights = dict()
+        for word in keyWords:
+            keyword_weights[word] = value_new_word
+            keyword_weights[word.lower()] = value_new_word
+            keyword_weights[word.upper()] = value_new_word
+        
         additional_weights = np.array([keyword_weights.get(word, 1) for word in tfidf_vectorizer.get_feature_names_out()])
+        
         text_features_products = text_features_products.multiply(additional_weights)
         text_features_users = text_features_users.multiply(additional_weights)
-    #Aplicar SVD
+    
+    #Obtener similitud de texto
     text_similarity = cosine_similarity(text_features_users, text_features_products)
+    #Explorar la similitud de atributos
     if (n_components != 0):
-        reduced_productos, reduced_users = process_attribute_column(productosCopy, userProductsCopy, atributes_columns, n_components)
+        reduced_productos, reduced_users = process_attribute_column(productosCopy, userProductsCopy, atributes_columns, n_components, stemming)
         #Calcular similitud
         attribute_similarity = cosine_similarity(reduced_users, reduced_productos)
-        print ("dimension de similitud de atributos", attribute_similarity.shape)
-        #Segun cantidad de componentes, se aplica un peso
     else:
-        productosCopy['combined_attributes'] = productos.apply(lambda x: clean_and_join_attributes(x, atributes_columns), axis=1)
+        #Calcular la similitud de atributos sin SVD
+        tfidf_vectorizer_attributes = TfidfVectorizer(stop_words = stopword_es)
+        if (stemming):
+            tfidf_vectorizer_attributes = TfidfVectorizer(tokenizer=tokenize_and_stem, token_pattern=None)
+            
+        #Limpieza de atributos
+        productosCopy['combined_attributes'] = productos[atributes_columns].apply(lambda x: clean_and_join_attributes(x, atributes_columns), axis=1)
+        userProductsCopy['combined_attributes'] = userProducts[atributes_columns].apply(lambda x: clean_and_join_attributes(x,atributes_columns), axis=1)
+        combined_attributes = pd.concat([productosCopy['combined_attributes'], userProductsCopy['combined_attributes']], ignore_index=True)
+        
+        #Aplicar TF-IDF a atributos
+        tfidf_vectorizer_attributes.fit(combined_attributes.values.astype('U'))
         text_features_products_attributes = tfidf_vectorizer_attributes.transform(productosCopy['combined_attributes'].values.astype('U'))
-        userProductsCopy['combined_attributes'] = userProducts.apply(lambda x: clean_and_join_attributes(x,atributes_columns), axis=1)
         text_features_users_attributes = tfidf_vectorizer_attributes.transform(userProductsCopy['combined_attributes'].values.astype('U'))
         attribute_similarity = cosine_similarity(text_features_users_attributes, text_features_products_attributes)
-    #Numeric features
+    
+    #Calcular similitud numerica
     scaler = StandardScaler()
     numeric_features = scaler.fit_transform(productos[numeric_columns])
     numeric_features_sparse = sp.csr_matrix(numeric_features)
@@ -161,27 +177,24 @@ def reccomendationAllColumns(productos,userProducts, text_columns, numeric_colum
     #print (user_numeric_features_sparse.shape)
     #Obtain similarity
     numeric_similarity = cosine_similarity(user_numeric_features_sparse, numeric_features_sparse)
-    return (text_similarity, numeric_similarity, attribute_similarity, text_features_users, text_features_products, user_numeric_features_sparse, numeric_features_sparse, tfidf_vectorizer, tfidf_vectorizer_attributes)
+    return (text_similarity, numeric_similarity, attribute_similarity)
 
 
-def get_reccomendation (productos, userProducts, text_columns, numeric_columns,atributes_columns, n_components,  keyWords=[], stemming=False, all_columns=True ):
+def get_reccomendation (productos, userProducts, text_columns, numeric_columns,atributes_columns, n_components,  keyWords=None, stemming=False, all_columns=True ):
     
     if (all_columns):
-        text_similarity, numeric_similarity, attribute_similarity, text_features_users, text_features_products, user_numeric_features_sparse, numeric_features_sparse, tfidf_vectorizer, tfidf_vectorizer_attributes = reccomendationAllColumns(productos,userProducts, text_columns, numeric_columns, atributes_columns, n_components, keyWords, stemming)
-        #Hay que aplicar un peso asociado segun la cantidad de columnas numericas y textuales
-        # print (len(text_columns))
-        # print (len(numeric_columns))
-        # print (len(atributes_columns))
-        #Imprimir palabras mas ocupadas y su cantidad de veces
-        #print (tfidf_vectorizer.vocabulary_)
-        #plotVectorizedData(tfidf_vectorizer, text_features_products, text_features_users)
+        text_similarity, numeric_similarity, attribute_similarity = reccomendationAllColumns(productos,userProducts, text_columns, numeric_columns, atributes_columns, n_components, keyWords, stemming)
+
+        #Aplicar magnitud y suma de similitudes
         total_columns = len(text_columns) + len(numeric_columns) + len(atributes_columns)
         text_weight = (len(text_columns) + len(atributes_columns))/total_columns
         numeric_weight = len(numeric_columns)/total_columns
         attribute_weight = len(atributes_columns)/total_columns
-        if (n_components != 0):
-            attribute_weight = n_components/total_columns
-        return  text_weight * text_similarity + numeric_weight * numeric_similarity + attribute_weight * attribute_similarity
+        
+        #Similitud combinada
+        similitud_combinada = text_weight * text_similarity + numeric_weight * numeric_similarity + attribute_weight * attribute_similarity
+        
+        return  similitud_combinada
     
 def get_product(idProducto, productos):
     #Obtener la informacion del producto
@@ -258,12 +271,10 @@ class NewItem(BaseModel):
 @app.post('/addPurchaseOrder')
 async def add_register(item: NewItem):
     try:
-        print ("item", item)
         idProducto = item.idProducto
         categoria = item.categoria
         #Se cargan los datos de los usuarios
         userProducts = pd.read_csv('data/usuarios'+ categoria  + '.csv', sep=',')
-        print (userProducts.shape)
         #Filtrar los productos de los usuarios ocupando la categoria de interes
         #Se cargan los datos de los productos
         productos = pd.read_csv('data/categorie'+ categoria + '.csv', sep=',')
@@ -272,8 +283,6 @@ async def add_register(item: NewItem):
         #Agregar el producto al usuario
         df_nueva_fila = pd.DataFrame([producto], columns=productos.columns)
         userProducts = pd.concat([userProducts, df_nueva_fila], ignore_index=True)
-        print ("nuevo data frame", userProducts.shape)
-        print (userProducts)
         #Guardar los datos
         userProducts.to_csv('data/usuarios'+ categoria  + '.csv', index=False)
         
@@ -292,10 +301,7 @@ class Item(BaseModel):
 @app.post("/recommendations")
 async def read_root(item: Item):
     #Se cargan los datos de los usuarios
-    #Usar model_dumps para transformar a json
-    #Obtener categoria desde item
     try:
-        print("datos de item", item)
         categoriaInteres = item.categoria
         cantidad = item.cantidad
         keyWords = item.keyWords
@@ -307,9 +313,6 @@ async def read_root(item: Item):
         #Filtrar los productos de los usuarios ocupando la categoria de interes
         #Se cargan los datos de los productos
         productos = pd.read_csv('data/categorie'+ categoriaInteres +'.csv', sep=',')
-        print ("categirua", categoriaInteres)
-        print (userProducts.shape)
-        print (productos.shape)
         with open('data/categoriesRegistersComplete.json', 'r') as archivo:
             data = json.load(archivo)
         datosCategoria = data[categoriaInteres]
@@ -319,7 +322,6 @@ async def read_root(item: Item):
 
         cantidad = cantidad + 1
         similitud_combinada = get_reccomendation(productos,userProducts, text_columns, numeric_columns, atributes_columns,  n_components, keyWords,stemming  )
-        print ("similitud combinada", similitud_combinada)
         #Aplicar magnitud y suma de similitudes
         magnitudes = np.linalg.norm(similitud_combinada, axis=1)
         sum_similitudes = similitud_combinada.sum(axis=0) / magnitudes.sum()
@@ -342,26 +344,7 @@ async def read_root(item: Item):
         }
         response = JSONResponse(content=response)
         return response
- 
-        # for i in range(similitud_combinada.shape[0]):
-        #     similar_items = [(productos['idProducto'].iloc[j], similitud_combinada[i][j]) for j in similar_indices]
-        #     similar_items = sorted(similar_items, key=lambda x: x[1], reverse=True)
-        #     #Transformar a JSON
-        #     listaRespuesta = list()
-        #     for item in similar_items:
-        #         #Transform to json
-        #         listaRespuesta.append({
-        #             "idProducto": item[0],
-        #             "similitud": item[1],
-        #             "categoria": categoriaInteres
-        #         })
-        #     response = {
-        #         "categoria": categoriaInteres,
-        #         "cantidad": cantidad-1,
-        #         "productos": listaRespuesta
-        #     }
-        #     response = JSONResponse(content=response)
-        #     return response
+    
     except Exception as e:
         print ("error", e)
         raise HTTPException(status_code=500, detail=str(e))
