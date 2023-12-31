@@ -1,5 +1,4 @@
 # Description: This file contains the main code of the API
-from typing import Union
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from fastapi import HTTPException
@@ -10,12 +9,8 @@ import pandas as pd
 import json
 import numpy as np
 import re
-import matplotlib.pyplot as plt
-from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
-from sklearn.decomposition import PCA
-from nltk.tokenize import RegexpTokenizer
 from sklearn.decomposition import TruncatedSVD
 from sklearn.preprocessing import StandardScaler
 import scipy.sparse as sp
