@@ -219,7 +219,7 @@ class NpEncoder(json.JSONEncoder):
 
 @app.get("/")
 def read_root():
-    return {"Hello": "World"}
+    return {"message": "Hello, World!"}
 
 @app.get('/users/{idUsuario}')
 async def read_user(idUsuario: str):
