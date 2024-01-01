@@ -22,7 +22,7 @@ from nltk.stem import SnowballStemmer
 app = FastAPI()
 
 #Definir puerto de la aplicacion
-port = int(os.environ.get("PORT", 8000))
+# port = int(os.environ.get("PORT", 8000))
 #Definiciones de columnas
 stopword_es = nltk.corpus.stopwords.words('spanish')
 text_columns = ['descripcion', 'titulo', 'tags', 'ciudad', 'opiniones', 'nombre', 'tagsVendedor', 'regionVendedor', 'ciudadVendedor']
@@ -31,8 +31,6 @@ numeric_columns = ['precio', 'cantidadReviews', 'unaEstrella', 'dosEstrellas', '
 
 stemmer = SnowballStemmer('spanish')
 stopword_es = nltk.corpus.stopwords.words('spanish')
-
-#vectorizer = TfidfVectorizer(stop_words = stopword_es)
 
 def clean (texto):
     texto = str(texto)
@@ -218,8 +216,13 @@ class NpEncoder(json.JSONEncoder):
         return super(NpEncoder, self).default(obj)
 
 @app.get("/")
-def read_root():
-    return {"message": "Hello, World!"}
+async def root():
+    return {"message": "Hello World"}
+
+
+@app.get("/hello/{name}")
+async def say_hello(name: str):
+    return {"message": f"Hello {name}"}
 
 @app.get('/users/{idUsuario}')
 async def read_user(idUsuario: str):
@@ -348,6 +351,6 @@ async def read_root(item: Item):
         print ("error", e)
         raise HTTPException(status_code=500, detail=str(e))
     
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=port)
+# if __name__ == "__main__":
+#     import uvicorn
+#     uvicorn.run(app, host="0.0.0.0", port=port)
