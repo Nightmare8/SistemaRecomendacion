@@ -227,6 +227,7 @@ async def say_hello(name: str):
 @app.get('/users/{idUsuario}')
 async def read_user(idUsuario: str):
     #Se cargan los datos de los usuarios
+    #!Problem with this endpdoint
     userProducts = pd.read_csv('data/usuarios.csv', sep=',')
     #Filtrar los productos de los usuarios ocupando la categoria de interes
     response = userProducts.to_json(orient="records")
