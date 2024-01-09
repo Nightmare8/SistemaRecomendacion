@@ -19,6 +19,15 @@ nltk.download('stopwords')
 nltk.download('punkt')
 from nltk.stem import SnowballStemmer
 
+#Conection to mongo
+from pymongo.mongo_client import MongoClient
+from pymongo.server_api import ServerApi
+uri = "mongodb+srv://juancaniguante8:juanpablo1997@cluster0.prilz3h.mongodb.net/?retryWrites=true&w=majority"
+
+# Create a new client and connect to the server
+client = MongoClient(uri, server_api=ServerApi('1'))
+db = client['test']
+
 app = FastAPI()
 
 #Definir puerto de la aplicacion
@@ -103,6 +112,8 @@ def process_attribute_column(products, userProducts, attribute_columns, n_compon
     return reduced_productos, reduced_users
 
 def reccomendationAllColumns(productos,userProducts, text_columns, numeric_columns,atributes_columns, n_components=2, keyWords = None, stemming=False):
+    print (productos)
+    print (userProducts)
     #aplicar el vectorizador a los productos
     tfidf_vectorizer = TfidfVectorizer(stop_words = stopword_es)
     if (stemming):
@@ -192,6 +203,8 @@ def get_reccomendation (productos, userProducts, text_columns, numeric_columns,a
 def get_product(idProducto, productos):
     #Obtener la informacion del producto
     producto = productos[productos['idProducto'] == idProducto].iloc[0].values.tolist()
+    print ("tiro error aqui")
+    print ("producto", producto)
     #Obtain the columns
     response = dict()
     for col in productos.columns:
@@ -215,29 +228,15 @@ class NpEncoder(json.JSONEncoder):
             return obj.tolist()
         return super(NpEncoder, self).default(obj)
 
-@app.get("/")
-async def root():
-    return {"message": "Hello World"}
-
-
-@app.get("/hello/{name}")
-async def say_hello(name: str):
-    return {"message": f"Hello {name}"}
-
-@app.get('/users/{idUsuario}')
-async def read_user(idUsuario: str):
-    #Se cargan los datos de los usuarios
-    #!Problem with this endpdoint
-    userProducts = pd.read_csv('data/usuarios.csv', sep=',')
-    #Filtrar los productos de los usuarios ocupando la categoria de interes
-    response = userProducts.to_json(orient="records")
-    response = JSONResponse(content=response)
-    return response
-
 @app.get("/product/{idProducto}/{categoria}")
-async def read_product(idProducto: str, categoria: str):
+async def read_product(idProducto: str, categoria: str):    
     #Se cargan los datos de los productos
-    productos = pd.read_csv('data/categorie'+ categoria + '.csv', sep=',')
+    productos = db['categoria' + categoria].find()
+    #Convert to dataframe
+    productos = pd.DataFrame(list(productos))
+    #Delete the object id
+    productos = productos.drop('_id', axis=1)
+    # productos = pd.read_csv('data/categorie'+ categoria + '.csv', sep=',')
     response = get_product(idProducto, productos)
     #Transform dict to json
     response = json.dumps(response, cls=NpEncoder)
@@ -274,28 +273,33 @@ class NewItem(BaseModel):
 @app.post('/addPurchaseOrder')
 async def add_register(item: NewItem):
     try:
+        print ("entra a la funcion")
         idProducto = item.idProducto
         categoria = item.categoria
-        #Se cargan los datos de los usuarios
-        userProducts = pd.read_csv('data/usuarios'+ categoria  + '.csv', sep=',')
-        #Filtrar los productos de los usuarios ocupando la categoria de interes
-        #Se cargan los datos de los productos
-        productos = pd.read_csv('data/categorie'+ categoria + '.csv', sep=',')
+        print ("idProducto", idProducto)
+        print ("categoria", categoria)
+        #Obtener el producto
+        collection = db['categoria' + categoria]
+
         #Buscar el producto
-        producto = productos[productos['idProducto'] == idProducto].iloc[0]
-        #Agregar el producto al usuario
-        df_nueva_fila = pd.DataFrame([producto], columns=productos.columns)
-        userProducts = pd.concat([userProducts, df_nueva_fila], ignore_index=True)
-        #Guardar los datos
-        userProducts.to_csv('data/usuarios'+ categoria  + '.csv', index=False)
+        producto = collection.find_one({'idProducto': idProducto})
+
+        if (producto == None):
+            raise HTTPException(status_code=500, detail="Producto no encontrado")
         
+        #Si no existe el producto, agregarlo a la coleccion de usuario
+        #Obtener la coleccion de usuarios
+        userCollection = db['usuarios' + categoria]
+        userCollection.insert_one(producto)
+
         return "success"
     except Exception as e:
+        print ("error", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 #Change to post
 class Item(BaseModel):
-    categoria: str
+    categoria: str or None
     cantidad: int
     keyWords: list = None
     stemming: bool = False
@@ -305,20 +309,26 @@ class Item(BaseModel):
 async def read_root(item: Item):
     #Se cargan los datos de los usuarios
     try:
-        categoriaInteres = item.categoria
+        print ("item", item)
+        categoria = item.categoria #*SIN EL MLC
         cantidad = item.cantidad
         keyWords = item.keyWords
         stemming = item.stemming
         n_components = item.n_components
         #Usar los datos para cargar segun la categoria
-        #Se cargan los datos de los usuarios
-        userProducts = pd.read_csv('data/usuarios' +  categoriaInteres  + '.csv', sep=',')
+        #Se cargan los datos de los usuarios desde mongo
+        userProducts = db['usuarios' + categoria].find()
+        #Convertir a dataframe
+        userProducts = pd.DataFrame(list(userProducts))
         #Filtrar los productos de los usuarios ocupando la categoria de interes
         #Se cargan los datos de los productos
-        productos = pd.read_csv('data/categorie'+ categoriaInteres +'.csv', sep=',')
+        #productos = pd.read_csv('data/categorie'+ categoria +'.csv', sep=',')
+        productos = db['categoria' + categoria].find()
+        #Convertir a dataframe
+        productos = pd.DataFrame(list(productos))
         with open('data/categoriesRegistersComplete.json', 'r') as archivo:
             data = json.load(archivo)
-        datosCategoria = data[categoriaInteres]
+        datosCategoria = data['MLC'+categoria]
         atributes_columns = []
         for atributo in datosCategoria['attributes']:
             atributes_columns.append(atributo['id'])
@@ -338,10 +348,10 @@ async def read_root(item: Item):
             listaRespuesta.append({
                 "idProducto": productos['idProducto'].iloc[i],
                 "similitud": sum_similitudes[i],
-                "categoria": categoriaInteres
+                "categoria": categoria
             })
         response = {
-            "categoria": categoriaInteres,
+            "categoria": categoria,
             "cantidad": cantidad-1,
             "productos": listaRespuesta
         }
@@ -351,7 +361,3 @@ async def read_root(item: Item):
     except Exception as e:
         print ("error", e)
         raise HTTPException(status_code=500, detail=str(e))
-    
-# if __name__ == "__main__":
-#     import uvicorn
-#     uvicorn.run(app, host="0.0.0.0", port=port)
