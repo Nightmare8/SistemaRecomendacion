@@ -290,6 +290,8 @@ async def add_register(item: NewItem):
         #Si no existe el producto, agregarlo a la coleccion de usuario
         #Obtener la coleccion de usuarios
         userCollection = db['usuarios' + categoria]
+        #Dropear _id de producto
+        producto.pop('_id')
         userCollection.insert_one(producto)
 
         return "success"
