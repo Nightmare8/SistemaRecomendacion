@@ -338,8 +338,10 @@ async def read_root(item: Item):
         cantidad = cantidad + 1
         similitud_combinada = get_reccomendation(productos,userProducts, text_columns, numeric_columns, atributes_columns,  n_components, keyWords,stemming  )
         #Aplicar magnitud y suma de similitudes
-        magnitudes = np.linalg.norm(similitud_combinada, axis=1)
-        sum_similitudes = similitud_combinada.sum(axis=0) / magnitudes.sum()
+        sum_similitudes = similitud_combinada.sum(axis=0)
+        maximo = sum_similitudes.max()
+        minimos = sum_similitudes.min()
+        sum_similitudes = (sum_similitudes - minimos)/(maximo - minimos)
         top_indices = sum_similitudes.argsort()[:-cantidad:-1]
         listaRespuesta = list()
         for i in top_indices:
